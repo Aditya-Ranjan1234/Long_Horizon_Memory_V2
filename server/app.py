@@ -54,6 +54,8 @@ try:
 except ImportError:
     HAS_WEB_INTERFACE = False
 
+print(f"HAS_WEB_INTERFACE: {HAS_WEB_INTERFACE}")
+
 app = create_app(
     LongHorizonMemoryEnvironment,
     LongHorizonMemoryAction,
@@ -63,8 +65,10 @@ app = create_app(
 )
 
 if HAS_WEB_INTERFACE:
+    print("Attempting to mount web interface manually...")
     try:
         mount_web_interface(app, env_name="long_horizon_memory")
+        print("Web interface mounted successfully.")
     except Exception as e:
         print(f"Failed to mount web interface: {e}")
 
