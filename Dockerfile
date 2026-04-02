@@ -73,7 +73,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/project:$PYTHONPATH"
 
 # Ensure web UI dependencies are installed in the final stage
-RUN pip install gradio jinja2 aiofiles
+RUN pip install "openenv-core[core,web]>=0.2.3" gradio jinja2 aiofiles
 
 # Health check - use 127.0.0.1 to ensure it's internal
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
