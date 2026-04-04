@@ -1,36 +1,22 @@
----
-title: Long Horizon Memory Environment
-emoji: "🧠"
-colorFrom: blue
-colorTo: green
-sdk: docker
-pinned: false
-app_port: 7860
-tags:
-  - openenv
-  - reinforcement-learning
-  - memory-management
-  - context-retention
----
 
-# 🧠 Long Horizon Memory Environment
+#  Long Horizon Memory Environment
 
 > **Advanced AI Memory Management System for Selective Context Retention Under Noise**
 
-## 🎯 Overview
+##  Overview
 
 Long Horizon Memory is a sophisticated reinforcement learning environment that simulates real-world cognitive challenges faced by AI assistants. The system evaluates an agent's ability to maintain optimal context retention in noisy information streams—a critical capability for production AI systems.
 
 **Core Challenge:** An AI agent receives a continuous stream of conversational messages containing both relevant technical information and irrelevant personal distractors. With a fixed 8-slot memory buffer, the agent must make intelligent retention decisions to maximize task performance.
 
 **Real-World Applications:**
-- 📞 Customer support systems managing multi-turn conversations
-- 🔬 Research assistants synthesizing academic literature
-- 🚨 Security incident response tracking IoCs and threats
-- 🏗️ Planning systems coordinating long-horizon tasks
-- 💬 Conversational AI maintaining context across extended dialogues
+-  Customer support systems managing multi-turn conversations
+-  Research assistants synthesizing academic literature
+-  Security incident response tracking IoCs and threats
+-  Planning systems coordinating long-horizon tasks
+-  Conversational AI maintaining context across extended dialogues
 
-## 🏆 Key Innovation: Semantic Ambiguity Challenges
+## Key Innovation: Semantic Ambiguity Challenges
 
 Our implementation features **24 carefully designed episodes** spanning three difficulty tiers, including **6 advanced semantically ambiguous scenarios** that test nuanced understanding:
 
@@ -43,7 +29,7 @@ Our implementation features **24 carefully designed episodes** spanning three di
 
 These episodes challenge agents with **context-dependent relevance** where identical keywords have different meanings based on technical vs. personal context.
 
-## 📊 Performance Metrics & Evaluation
+##  Performance Metrics & Evaluation
 
 ### Scoring Formula
 
@@ -70,7 +56,7 @@ task_score = 0.6×recall + 0.4×precision - 0.25×incorrect_rate - 0.15×overflo
 
 **Total Dataset:** 24 episodes, 9 conversation domains, 200+ annotated messages
 
-## 🔧 OpenEnv Interface
+##  OpenEnv Interface
 
 ### Action Space: `LongHorizonMemoryAction`
 
@@ -107,7 +93,7 @@ task_score = 0.6×recall + 0.4×precision - 0.25×incorrect_rate - 0.15×overflo
 }
 ```
 
-## 🤖 Our Approach: Advanced Prompt Engineering + Hybrid Intelligence
+##  Our Approach: Advanced Prompt Engineering + Hybrid Intelligence
 
 ### Architecture Overview
 
@@ -130,7 +116,7 @@ Our solution combines **state-of-the-art LLM reasoning** with **intelligent heur
                                        • Conservative decision logic
 ```
 
-### 🎯 Prompt Engineering Strategy
+###  Prompt Engineering Strategy
 
 **1. Explicit Scoring Formula Teaching**
 ```
@@ -159,7 +145,7 @@ Consider current memory state and whether you need to make room or keep current 
 Output your decision as JSON only.
 ```
 
-### 🛡️ Robust Fallback System
+### Robust Fallback System
 
 **58-keyword intelligent heuristic** with dual classification:
 
@@ -174,7 +160,7 @@ Output your decision as JSON only.
 - Relevant → `add` (if space) or `remove oldest` then `add` (if full)
 - Neutral → Conservative `add` (if <6 slots) or `noop`
 
-### 📈 Performance Monitoring
+###  Performance Monitoring
 
 **Real-time LLM tracking:**
 - `[LLM] Using Qwen/Qwen2.5-72B-Instruct (attempt N)` → API success
@@ -191,7 +177,7 @@ Every step shows:
 - Correct items in memory (recall tracking)
 - Incorrect items in memory (precision tracking)
 
-## 🏃 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -241,7 +227,7 @@ python inference.py  # Runs easy, medium, hard tasks
 [SUMMARY] Total: 24 episodes | Success: 20 (83.3%) | Avg Final Reward: 0.915
 ```
 
-## 🎓 Why This Approach Works
+##  Why This Approach Works
 
 ### 1. **Formula-Aware Decision Making**
 Unlike generic LLMs, our agent explicitly understands the evaluation criteria and optimizes for it:
@@ -275,25 +261,8 @@ Both mention compilers, but **intent differs**. Our rich prompts provide suffici
 - **5% API failure** → Heuristic fallback prevents zero-performance scenarios
 - **Zero single-point-of-failure** design
 
-## 🧪 Experimental Validation
 
-### Baseline Comparisons
-
-| Approach | Success Rate | Avg Score | Strengths | Weaknesses |
-|----------|-------------|-----------|-----------|------------|
-| **Random Baseline** | ~11% | 0.42 | Unbiased exploration | No learning, no pattern recognition |
-| **Simple Keyword Heuristic** | ~45% | 0.65 | Fast, deterministic | Fails on semantic ambiguity |
-| **Generic LLM (no prompt eng)** | ~60% | 0.75 | Understands language | Doesn't optimize for scoring formula |
-| **Our Approach** | **~83%** | **0.92** | Formula-aware, context-rich, adaptive | Requires API credits |
-
-### Key Improvements Over Baselines
-
-1. **+38% success rate** vs. simple keyword heuristic
-2. **+23% success rate** vs. generic LLM
-3. **Perfect scores (1.0)** on 50% of episodes
-4. **Zero catastrophic failures** (score < 0.3) due to fallback system
-
-## 🛠️ Development & Testing
+##  Development & Testing
 
 ### Local Server
 
@@ -320,7 +289,7 @@ docker build -t long_horizon_memory-env:latest -f server/Dockerfile .
 docker run -p 7860:7860 long_horizon_memory-env:latest
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 rl/
@@ -340,7 +309,7 @@ rl/
     └── requirements.txt          # Python dependencies
 ```
 
-## 🎯 Key Technical Decisions
+## Key Technical Decisions
 
 ### Why Qwen/Qwen2.5-72B-Instruct?
 
@@ -367,7 +336,7 @@ rl/
 - **Production reliability**: Ensures completion even with minor issues
 - **Reasonable latency**: 45s per retry balances responsiveness with success rate
 
-## 💡 Future Improvements
+##  Future Improvements
 
 ### Potential Enhancements
 
@@ -396,7 +365,7 @@ rl/
    - Use heuristic only for low-confidence predictions
    - Best-of-both-worlds approach
 
-## 🏅 Competition Advantages
+##  Competition Advantages
 
 ### What Makes This Submission Stand Out
 
@@ -417,7 +386,7 @@ rl/
 - **API Efficiency**: <150 tokens/decision, 3 retry maximum
 - **Latency**: <2s per decision (with API), <100ms with fallback
 
-## 📚 References & Acknowledgments
+##  References & Acknowledgments
 
 **Environment Design**: OpenEnv framework for standardized RL environments
 **LLM Provider**: HuggingFace Inference API (Qwen/Qwen2.5-72B-Instruct)
@@ -431,11 +400,11 @@ rl/
 
 ---
 
-## 📄 License
+##  License
 
 This project is part of the Meta RL Hackathon submission.
 
-## 👥 Contributors
+##  Contributors
 
 Built with advanced prompt engineering and semantic episode design for competitive RL evaluation.
 
@@ -443,4 +412,4 @@ Built with advanced prompt engineering and semantic episode design for competiti
 
 ---
 
-**⭐ If you find this approach useful, please consider starring the repository!**
+** If you find this approach useful, please consider starring the repository!**
