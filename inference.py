@@ -98,7 +98,13 @@ def log_step(
         score = metadata.get("task_score", 0.0)
         correct = metadata.get("correct_in_memory", 0)
         incorrect = metadata.get("incorrect_in_memory", 0)
+        memory_ages = metadata.get("memory_ages", [])
+        avg_age = metadata.get("avg_memory_age", 0)
+
         base_log += f" | score={score:.3f} correct={correct} incorrect={incorrect}"
+
+        if memory_ages:
+            base_log += f" mem_ages={memory_ages} avg_age={avg_age:.1f}"
 
     print(base_log, flush=True)
 
