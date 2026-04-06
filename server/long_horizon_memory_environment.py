@@ -43,6 +43,7 @@ class LongHorizonMemoryEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     MEMORY_CAPACITY = 8
+    DECAY_PENALTY = 0.01  # Penalty per step of age for each memory slot
 
     def __init__(self):
         """Initialize the long_horizon_memory environment."""
@@ -159,12 +160,26 @@ class LongHorizonMemoryEnvironment(Environment):
 
     def _compute_reward(self, action_penalty: float = 0.0, terminal: bool = False) -> float:
         metrics = self._compute_quality_metrics()
+
+        # Calculate temporal decay penalty
+        decay_penalty = 0.0
+        for slot in self.memory:
+            age = self.total_message_number - slot.get("timestamp", self.total_message_number)
+            # Apply decay to all memories, but especially punish old irrelevant ones
+            base_decay = self.DECAY_PENALTY * age
+            # Critical old memories (relevant) get reduced penalty
+            if slot.get("isRelevant", False):
+                decay_penalty += base_decay * 0.3  # 70% discount for relevant memories
+            else:
+                decay_penalty += base_decay  # Full penalty for irrelevant old memories
+
         shaped = (
             0.7 * metrics["recall"]
             + 0.3 * metrics["precision"]
             - 0.4 * metrics["incorrect_rate"]
             - 0.2 * metrics["overflow_rate"]
             - action_penalty
+            - decay_penalty
         )
 
         if terminal:
@@ -176,6 +191,12 @@ class LongHorizonMemoryEnvironment(Environment):
         current_message = self._current_message()
         new_message = "" if current_message is None else current_message.get("text", "")
         stats = self._memory_stats()
+
+        # Calculate memory ages for metadata
+        memory_ages = [
+            self.total_message_number - m.get("timestamp", self.total_message_number)
+            for m in self.memory
+        ]
 
         return LongHorizonMemoryObservation(
             domain=self.current_domain,
@@ -194,6 +215,8 @@ class LongHorizonMemoryEnvironment(Environment):
                 "incorrect_in_memory": stats["incorrect"],
                 "task_score": self._task_score(),
                 "last_action_error": self.last_action_error,
+                "memory_ages": memory_ages,
+                "avg_memory_age": sum(memory_ages) / len(memory_ages) if memory_ages else 0,
             },
         )
 
@@ -242,6 +265,7 @@ class LongHorizonMemoryEnvironment(Environment):
                     {
                         "text": current_message.get("text", ""),
                         "isRelevant": bool(current_message.get("isRelevant", True)),
+                        "timestamp": self.total_message_number,
                     }
                 )
         elif operation == "remove":

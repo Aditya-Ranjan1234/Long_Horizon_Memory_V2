@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat Dockerfile)",
+      "Bash(cat server/Dockerfile)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
