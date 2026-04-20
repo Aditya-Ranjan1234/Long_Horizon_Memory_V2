@@ -28,8 +28,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app:$PYTHONPATH"
 
-# Ensure web UI dependencies are explicitly available
-RUN pip install --upgrade "openenv-core[core,web]>=0.2.3" gradio jinja2 aiofiles
+# Dependencies are managed by uv sync above using pyproject.toml
 
 # Health check - use 127.0.0.1 to ensure it's internal
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
