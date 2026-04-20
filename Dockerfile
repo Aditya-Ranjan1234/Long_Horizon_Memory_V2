@@ -27,6 +27,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Set the virtual environment path
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app:$PYTHONPATH"
+ENV ENABLE_WEB_INTERFACE=true
 
 # Dependencies are managed by uv sync above using pyproject.toml
 

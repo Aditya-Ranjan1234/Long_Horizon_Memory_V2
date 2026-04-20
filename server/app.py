@@ -54,7 +54,6 @@ app = create_app(
     LongHorizonMemoryObservation,
     env_name="long_horizon_memory",
     max_concurrent_envs=1,
-    render_web_ui=True,
 )
 
 
