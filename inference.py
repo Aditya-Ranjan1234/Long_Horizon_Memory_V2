@@ -64,14 +64,14 @@ IRRELEVANCE INDICATORS (discard these):
 - Random observations with no technical connection
 
 STRATEGY:
-1. ADD: If message contains technical content relevant to the domain
-2. REMOVE: If memory contains noise AND you need space for better content
+1. APPEND: If message contains technical content relevant to the domain
+2. REWRITE: Compress memory when it has become noisy or too long
 3. NOOP: If current message is noise and memory is already optimal
 
 CRITICAL: You must output ONLY valid JSON with this exact format:
-{"operation": "add"}
+{"operation": "append"}
 OR
-{"operation": "remove", "remove_index": 0}
+{"operation": "rewrite", "rewrite_memory": "<compressed memory text>"}
 OR
 {"operation": "noop"}
 
@@ -152,15 +152,15 @@ def _heuristic_action(observation: LongHorizonMemoryObservation) -> LongHorizonM
 
     if is_relevant:
         # Message is relevant
-        if observation.memory_count < 8:
-            return LongHorizonMemoryAction(operation="add")
-        else:
-            # Memory full, remove oldest to make room
-            return LongHorizonMemoryAction(operation="remove", remove_index=0)
+        if observation.memory_count < 120:
+            return LongHorizonMemoryAction(operation="append")
+        # Light compression fallback when memory is too large.
+        compressed = "\n".join(observation.memory.splitlines()[-8:]) if observation.memory else ""
+        return LongHorizonMemoryAction(operation="rewrite", rewrite_memory=compressed)
 
     # Neutral message - conservative approach
-    if observation.memory_count < 6:  # Still have room
-        return LongHorizonMemoryAction(operation="add")
+    if observation.memory_count < 100:  # Still have room
+        return LongHorizonMemoryAction(operation="append")
 
     return LongHorizonMemoryAction(operation="noop")
 
@@ -174,12 +174,12 @@ def _parse_action(content: str, observation: LongHorizonMemoryObservation) -> Lo
     try:
         payload = json.loads(normalized)
         op = payload.get("operation", "noop")
-        if op == "remove":
-            idx = payload.get("remove_index")
-            if isinstance(idx, int):
-                return LongHorizonMemoryAction(operation="remove", remove_index=idx)
+        if op == "rewrite":
+            rewrite_memory = payload.get("rewrite_memory")
+            if isinstance(rewrite_memory, str):
+                return LongHorizonMemoryAction(operation="rewrite", rewrite_memory=rewrite_memory)
             return LongHorizonMemoryAction(operation="noop")
-        if op in {"add", "noop"}:
+        if op in {"append", "noop"}:
             return LongHorizonMemoryAction(operation=op)
     except Exception:
         pass
@@ -193,11 +193,10 @@ def choose_action(
 ) -> LongHorizonMemoryAction:
     # Build enhanced context-aware prompt
     memory_summary = (
-        f"Currently storing {observation.memory_count}/8 items in memory.\n"
-        f"Current memory contents:\n"
-        + "\n".join(f"  [{i}] {msg}" for i, msg in enumerate(observation.memory))
+        f"Currently storing about {observation.memory_count} tokens in memory.\n"
+        f"Current memory contents:\n{observation.memory}"
         if observation.memory
-        else "Memory is empty (0/8 items)."
+        else "Memory is empty."
     )
 
     metadata = observation.metadata
@@ -215,14 +214,14 @@ PERFORMANCE METRICS:
 - Current task score: {current_score:.2f} (need ≥0.70 for success)
 - Correct items in memory: {correct_count}
 - Incorrect items in memory: {incorrect_count}
-- Recall: {correct_count}/{metadata.get('memory_capacity', 8)} slots used
+- Memory budget: {metadata.get('memory_token_budget', 160)} tokens
 
 NEW INCOMING MESSAGE:
 "{observation.new_message}"
 
 DECISION REQUIRED:
 Analyze if the new message is relevant to the {observation.domain} domain task.
-Consider current memory state and whether you need to make room or keep current optimal state.
+Use append for relevant messages, noop for irrelevant messages, and rewrite only when compression is needed.
 Output your decision as JSON only."""
 
     last_error: Optional[Exception] = None
@@ -253,8 +252,8 @@ Output your decision as JSON only."""
 
 
 def action_to_text(action: LongHorizonMemoryAction) -> str:
-    if action.operation == "remove":
-        return f"remove:{action.remove_index}"
+    if action.operation == "rewrite":
+        return f"rewrite:{len((action.rewrite_memory or '').split())}t"
     return action.operation
 
 
@@ -328,15 +327,15 @@ def main() -> None:
         total_success = 0
         all_scores = []
 
-        # Determine max episode ID by checking episodes.json
+        # Determine episode IDs by checking episodes.json.
         try:
             with open("server/episodes.json", "r", encoding="utf-8") as f:
                 episodes_data = json.load(f)
-                max_episode_id = max(ep["episode_id"] for ep in episodes_data)
+                episode_ids = [str(ep.get("episode_id", i)) for i, ep in enumerate(episodes_data)]
         except Exception:
-            max_episode_id = 9  # Default to 9 if can't read
+            episode_ids = ["0"]
 
-        for ep_id in range(1, max_episode_id + 1):
+        for ep_id in episode_ids:
             os.environ["LONG_HORIZON_MEMORY_EPISODE_ID"] = str(ep_id)
             os.environ["LONG_HORIZON_MEMORY_TASK"] = "all"
 
@@ -344,10 +343,10 @@ def main() -> None:
             try:
                 with open("server/episodes.json", "r", encoding="utf-8") as f:
                     episodes_data = json.load(f)
-                    episode = next((ep for ep in episodes_data if ep["episode_id"] == ep_id), None)
+                    episode = next((ep for ep in episodes_data if str(ep.get("episode_id")) == str(ep_id)), None)
                     if episode:
                         difficulty = episode.get("difficulty", "unknown")
-                        domain = episode.get("conversation_domain", "unknown")
+                        domain = "long_horizon_memory"
                         if ENABLE_DEBUG_LOGS:
                             print(f"\n[EPISODE] id={ep_id} difficulty={difficulty} domain={domain}", flush=True)
             except Exception:
@@ -402,10 +401,11 @@ def main() -> None:
                 total_success += 1
 
         # Print summary
-        success_rate = (total_success / max_episode_id) * 100 if max_episode_id > 0 else 0
+        total_episodes = len(episode_ids)
+        success_rate = (total_success / total_episodes) * 100 if total_episodes > 0 else 0
         avg_final_reward = sum(all_scores) / len(all_scores) if all_scores else 0.0
         if ENABLE_DEBUG_LOGS:
-            print(f"\n[SUMMARY] Total: {max_episode_id} episodes | Success: {total_success} ({success_rate:.1f}%) | Avg Final Reward: {avg_final_reward:.3f}", flush=True)
+            print(f"\n[SUMMARY] Total: {total_episodes} episodes | Success: {total_success} ({success_rate:.1f}%) | Avg Final Reward: {avg_final_reward:.3f}", flush=True)
     else:
         # Original behavior: run easy, medium, hard tasks
         for task in TASKS:

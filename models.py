@@ -4,28 +4,24 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""
-Data models for the Long Horizon Memory Environment.
+"""Data models for the Long Horizon Memory Environment."""
 
-The long_horizon_memory environment simulates selective long-horizon memory management.
-"""
-
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from openenv.core.env_server.types import Action, Observation
 from pydantic import Field
 
 
 class LongHorizonMemoryAction(Action):
-    """Action to manage memory with add/remove/noop operations."""
+    """Action to manage compressed memory with append/rewrite/noop operations."""
 
-    operation: Literal["add", "remove", "noop"] = Field(
+    operation: Literal["append", "rewrite", "noop"] = Field(
         default="noop",
         description="Memory operation to apply at this step.",
     )
-    remove_index: Optional[int] = Field(
+    rewrite_memory: Optional[str] = Field(
         default=None,
-        description="0-based memory index to remove when operation='remove'.",
+        description="Replacement memory content when operation is rewrite.",
     )
 
 
@@ -34,7 +30,7 @@ class LongHorizonMemoryObservation(Observation):
 
     domain: str = Field(
         default="long_horizon_memory",
-        description="Conversation domain for the current episode.",
+        description="Environment domain identifier.",
     )
     task_name: str = Field(
         default="easy",
@@ -44,13 +40,13 @@ class LongHorizonMemoryObservation(Observation):
         default="",
         description="The current message shown to the agent.",
     )
-    memory: List[str] = Field(
-        default_factory=list,
+    memory: str = Field(
+        default="",
         description="Current long-term memory entries retained by the agent.",
     )
     memory_count: int = Field(
         default=0,
-        description="Number of messages in memory.",
+        description="Token Count",
     )
     reward: float = Field(
         default=0.0,

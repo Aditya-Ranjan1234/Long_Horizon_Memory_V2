@@ -25,18 +25,17 @@ class EpisodeResult:
 
 
 class RandomBaselineAgent:
-    """Random policy over add/remove/noop actions."""
+    """Random policy over append/rewrite/noop actions."""
 
     def __init__(self, seed: int | None = None):
         self._rng = random.Random(seed)
 
     def act(self, memory_count: int) -> LongHorizonMemoryAction:
-        op = self._rng.choices(["add", "remove", "noop"], weights=[0.45, 0.25, 0.30], k=1)[0]
-        if op == "remove":
-            if memory_count == 0:
+        op = self._rng.choices(["append", "rewrite", "noop"], weights=[0.50, 0.20, 0.30], k=1)[0]
+        if op == "rewrite":
+            if memory_count < 20:
                 return LongHorizonMemoryAction(operation="noop")
-            idx = self._rng.randrange(memory_count)
-            return LongHorizonMemoryAction(operation="remove", remove_index=idx)
+            return LongHorizonMemoryAction(operation="rewrite", rewrite_memory="")
 
         return LongHorizonMemoryAction(operation=op)
 
