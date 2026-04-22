@@ -33,6 +33,7 @@ dev = [
 server = "server.app:main"
 random-baseline = "random_baseline:main"
 inference = "inference:main"
+ollama-inference-test = "ollama_inference_test:main"
 
 [tool.setuptools]
 include-package-data = true

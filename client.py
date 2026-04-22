@@ -36,8 +36,8 @@ class LongHorizonMemoryEnv(
             Dictionary representation suitable for JSON encoding
         """
         payload = {"operation": action.operation}
-        if action.remove_index is not None:
-            payload["remove_index"] = action.remove_index
+        if action.rewrite_memory is not None:
+            payload["rewrite_memory"] = action.rewrite_memory
         return payload
 
     def _parse_result(self, payload: Dict) -> StepResult[LongHorizonMemoryObservation]:
@@ -55,7 +55,7 @@ class LongHorizonMemoryEnv(
             domain=obs_data.get("domain", "long_horizon_memory"),
             task_name=obs_data.get("task_name", "easy"),
             new_message=obs_data.get("new_message", ""),
-            memory=obs_data.get("memory", []),
+            memory=obs_data.get("memory", ""),
             memory_count=obs_data.get("memory_count", 0),
             reward=obs_data.get("reward", payload.get("reward", 0.0)),
             done=obs_data.get("done", payload.get("done", False)),
