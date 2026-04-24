@@ -61,7 +61,7 @@ class LongHorizonMemoryEnvironment(Environment):
     TERMINAL_WEIGHT = 0.60
 
     def __init__(self):
-        episodes_path = Path(__file__).with_name("episodes.json")
+        episodes_path = Path(__file__).with_name("episodes_extreme_30.json")
         with episodes_path.open("r", encoding="utf-8") as f:
             self.episodes = json.load(f)
 
