@@ -19,20 +19,8 @@
       "destination": "api/index.py"
     },
     {
-      "source": "/assets/:path*",
-      "destination": "/ui/assets/:path*"
-    },
-    {
-      "source": "/vite.svg",
-      "destination": "/ui/vite.svg"
-    },
-    {
-      "source": "/favicon.ico",
-      "destination": "/ui/favicon.ico"
-    },
-    {
-      "source": "/(.*)",
-      "destination": "/ui/index.html"
+      "source": "/((?!api/).*)",
+      "destination": "/ui/$1"
     }
   ]
 }
