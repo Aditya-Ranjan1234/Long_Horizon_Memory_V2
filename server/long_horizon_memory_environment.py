@@ -71,7 +71,7 @@ class LongHorizonMemoryEnvironment(Environment):
     HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
 
     def __init__(self):
-        episodes_path = Path(__file__).with_name("episodes_extreme_30.json")
+        episodes_path = Path(__file__).with_name("episodes.json")
         with episodes_path.open("r", encoding="utf-8") as f:
             self.episodes = json.load(f)
 
