@@ -70,6 +70,7 @@ class ConnectionManager:
             pass
 
     async def enrichment_broadcast(self, data: dict):
+        print(f"[DEBUG] enrichment_broadcast entered with {len(self.active_connections)} connections")
         if "timestamp" not in data:
             data["timestamp"] = datetime.now().isoformat()
         
@@ -81,6 +82,7 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(message)
+                print(f"[DEBUG] Sent message to client {id(connection)}")
             except Exception as e:
                 print(f"[BROADCAST ERROR] {e}")
                 pass
@@ -89,10 +91,14 @@ class ConnectionManager:
         await websocket.accept()
         # Capture the running loop if not already done
         if not self.loop:
-            self.loop = asyncio.get_running_loop()
+            try:
+                self.loop = asyncio.get_running_loop()
+                print(f"[DEBUG] manager.loop captured in connect: {id(self.loop)}")
+            except Exception as e:
+                print(f"[DEBUG] Failed to capture loop in connect: {e}")
             
         self.active_connections.append(websocket)
-        # Only start HF proxy task if not already running AND not on HF Space
+        print(f"[DEBUG] Connection accepted. Total connections: {len(self.active_connections)}")
         is_hf = os.environ.get("SPACE_ID") is not None
         if not is_hf:
             if not self.hf_task or self.hf_task.done():
@@ -129,16 +135,23 @@ manager = ConnectionManager()
 def get_monitored_env_class(manager):
     class MonitoredEnv(LongHorizonMemoryEnvironment):
         def _broadcast(self, data: dict):
+            print(f"[DEBUG] _broadcast bridge triggered. manager.loop: {id(manager.loop) if manager.loop else 'NONE'}")
             if manager.loop:
-                asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), manager.loop)
+                try:
+                    asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), manager.loop)
+                    print("[DEBUG] run_coroutine_threadsafe called")
+                except Exception as e:
+                    print(f"[DEBUG] run_coroutine_threadsafe FAILED: {e}")
             else:
+                print("[DEBUG] No manager.loop found in bridge")
                 # Still try to find a loop if possible
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
+                        print(f"[DEBUG] Using fallback loop: {id(loop)}")
                         asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), loop)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Fallback loop failed: {e}")
 
         def step(self, action: LongHorizonMemoryAction) -> LongHorizonMemoryObservation:
             obs = super().step(action)
