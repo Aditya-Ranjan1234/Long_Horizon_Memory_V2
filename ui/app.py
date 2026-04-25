@@ -36,15 +36,16 @@ except Exception as e:  # pragma: no cover
     ) from e
 
 try:
+    from long_horizon_memory_environment import LongHorizonMemoryEnvironment
+    # If models exist as a separate file, we'd import them here. 
+    # For now, let's assume they are handled by openenv or accessible.
     from models import LongHorizonMemoryAction, LongHorizonMemoryObservation
-    from server.long_horizon_memory_environment import LongHorizonMemoryEnvironment
 except (ImportError, ModuleNotFoundError):
-    try:
-        from ..models import LongHorizonMemoryAction, LongHorizonMemoryObservation
-        from .long_horizon_memory_environment import LongHorizonMemoryEnvironment
-    except (ImportError, ModuleNotFoundError):
-        from long_horizon_memory.models import LongHorizonMemoryAction, LongHorizonMemoryObservation
-        from long_horizon_memory.server.long_horizon_memory_environment import LongHorizonMemoryEnvironment
+    # Fallback to local imports if the above fails
+    from long_horizon_memory_environment import LongHorizonMemoryEnvironment
+    # Dummy models if not found, though openenv usually provides them
+    class LongHorizonMemoryAction: pass
+    class LongHorizonMemoryObservation: pass
 
 
 from datetime import datetime

@@ -70,3 +70,14 @@ coverage.xml
 *.tmp
 *.bak
 *.swp
+
+# UI Dependencies
+ui/node_modules/
+ui/dist/
+ui/.env
+ui/.env.local
+ui/.DS_Store
+ui/*.log
+
+benchmark/
+benchmark/.env

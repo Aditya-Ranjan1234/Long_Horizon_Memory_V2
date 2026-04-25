@@ -30,7 +30,7 @@ class SyncHFClient:
         response.raise_for_status()
         return response.json()
 
-HF_SPACE_URL = "https://aditya-ranjan1234-long-horizon-memory-v2.hf.space"
+HF_SPACE_URL = "http://localhost:7860"
 
 class HFEnvWrapper(gym.Env):
     def __init__(self, base_url):
