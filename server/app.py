@@ -87,6 +87,10 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
+        # Capture the running loop if not already done
+        if not self.loop:
+            self.loop = asyncio.get_running_loop()
+            
         self.active_connections.append(websocket)
         # Only start HF proxy task if not already running AND not on HF Space
         is_hf = os.environ.get("SPACE_ID") is not None
@@ -108,6 +112,7 @@ class ConnectionManager:
         
         while True:
             try:
+                import websockets
                 async with websockets.connect(hf_ws_url) as hf_ws:
                     print("[PROXY] Connected to HF Space WebSocket")
                     while True:
@@ -125,15 +130,13 @@ def get_monitored_env_class(manager):
     class MonitoredEnv(LongHorizonMemoryEnvironment):
         def _broadcast(self, data: dict):
             if manager.loop:
-                manager.loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(manager.enrichment_broadcast(data))
-                )
+                asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), manager.loop)
             else:
-                # Fallback: try to get loop from thread (unlikely to work but safe)
+                # Still try to find a loop if possible
                 try:
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
-                        loop.create_task(manager.enrichment_broadcast(data))
+                        asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), loop)
                 except Exception:
                     pass
 
