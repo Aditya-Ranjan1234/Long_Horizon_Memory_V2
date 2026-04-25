@@ -164,6 +164,16 @@ app = create_app(
 )
 
 # --- Serve custom UI if available ---
+# Debug: Print current structure
+print(f"[DEBUG] Current working directory: {os.getcwd()}")
+print(f"[DEBUG] __file__: {__file__}")
+try:
+    print(f"[DEBUG] Contents of /app: {os.listdir('/app')}")
+    if os.path.exists('/app/ui'):
+        print(f"[DEBUG] Contents of /app/ui: {os.listdir('/app/ui')}")
+except Exception as e:
+    print(f"[DEBUG] Could not list /app: {e}")
+
 ui_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
 if os.path.exists(ui_dist_path):
     print(f"[SERVER] Mounting custom UI from {ui_dist_path}")
