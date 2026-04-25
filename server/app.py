@@ -168,16 +168,26 @@ app = create_app(
 )
 
 # --- Serve custom UI if available ---
-ui_dist_path = os.path.join(os.path.dirname(__file__), "dist")
+# Primary path (Project Root)
+ui_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dashboard_dist")
 if os.path.exists(ui_dist_path):
     print(f"[SERVER] Mounting custom UI from {ui_dist_path}")
     app.mount("/web", StaticFiles(directory=ui_dist_path, html=True), name="custom_web")
 else:
-    # Fallback for local development if not in server/dist
-    ui_dist_path_alt = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
-    if os.path.exists(ui_dist_path_alt):
-        print(f"[SERVER] Mounting custom UI from {ui_dist_path_alt}")
-        app.mount("/web", StaticFiles(directory=ui_dist_path_alt, html=True), name="custom_web")
+    # Fallback 1: Nested in server/dist
+    ui_dist_path_alt1 = os.path.join(os.path.dirname(__file__), "dist")
+    # Fallback 2: Local dev path
+    ui_dist_path_alt2 = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
+    
+    selected_path = None
+    if os.path.exists(ui_dist_path_alt1):
+        selected_path = ui_dist_path_alt1
+    elif os.path.exists(ui_dist_path_alt2):
+        selected_path = ui_dist_path_alt2
+        
+    if selected_path:
+        print(f"[SERVER] Mounting custom UI from {selected_path}")
+        app.mount("/web", StaticFiles(directory=selected_path, html=True), name="custom_web")
     else:
         print(f"[SERVER] Custom UI dist not found, using default OpenEnv UI")
 
