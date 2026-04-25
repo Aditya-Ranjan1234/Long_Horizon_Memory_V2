@@ -19,8 +19,16 @@
       "destination": "api/index.py"
     },
     {
+      "source": "/assets/(.*)",
+      "destination": "/ui/assets/$1"
+    },
+    {
+      "source": "/vite.svg",
+      "destination": "/ui/vite.svg"
+    },
+    {
       "source": "/((?!api/|assets/|favicon.ico|vite.svg).*)",
-      "destination": "/index.html"
+      "destination": "/ui/index.html"
     }
   ]
 }
