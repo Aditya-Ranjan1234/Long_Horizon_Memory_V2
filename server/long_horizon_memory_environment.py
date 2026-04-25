@@ -44,28 +44,30 @@ except (ImportError, ModuleNotFoundError):
 def broadcast_sync(data_type: str, payload: Dict[str, Any]):
     """Helper to broadcast data to the WebSocket manager if available."""
     try:
-        from server.app import manager
+        try:
+            from server.app import manager  # type: ignore
+        except Exception:
+            from app import manager  # type: ignore
+
+        event_payload = {"type": data_type, "payload": payload}
         if manager and manager.active_connections:
-            # We are in a sync environment, so we need to run the async broadcast
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(manager.enrichment_broadcast({
-                    "type": data_type,
-                    "payload": payload
-                }))
+            # Works both inside async handlers and plain sync execution.
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(manager.enrichment_broadcast(event_payload))
+            except RuntimeError:
+                asyncio.run(manager.enrichment_broadcast(event_payload))
         
         # Also send to Vercel hosted dashboard if we are in HF Space
         # Check if running on HF Spaces
         if os.getenv("SPACE_ID"):
             import httpx
             dashboard_url = "https://long-horizon-memory-v2.vercel.app/api/broadcast"
-            # Fire and forget
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(httpx.post(dashboard_url, json={
-                    "type": data_type,
-                    "payload": payload
-                }, timeout=1.0))
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(asyncio.to_thread(httpx.post, dashboard_url, json=event_payload, timeout=2.0))
+            except RuntimeError:
+                httpx.post(dashboard_url, json=event_payload, timeout=2.0)
     except Exception:
         pass
 
