@@ -76,7 +76,3 @@ demo_llm_judge.py
 example_usage.py
 test_new_rewards.py
 train_local_ppo.py
-final grpo notebook.ipynb
-grpo_train_new_rewards.ipynb
-memory_sft_final.zip
-train.ipynb
