@@ -20,7 +20,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": "ui/$1"
+      "destination": "/index.html"
     }
   ]
 }
