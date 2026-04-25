@@ -50,6 +50,7 @@ except (ImportError, ModuleNotFoundError):
 from datetime import datetime
 import json
 import asyncio
+import queue
 from typing import List
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -63,11 +64,19 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.hf_task = None
-        self.loop = None
-        try:
-            self.loop = asyncio.get_event_loop()
-        except Exception:
-            pass
+        self.broadcast_queue = queue.Queue()
+        self.worker_task = None
+
+    async def broadcast_worker(self):
+        print("[DEBUG] broadcast_worker started")
+        while True:
+            try:
+                # Use run_in_executor to avoid blocking the loop while waiting for the queue
+                data = await asyncio.get_event_loop().run_in_executor(None, self.broadcast_queue.get)
+                await self.enrichment_broadcast(data)
+            except Exception as e:
+                print(f"[DEBUG] broadcast_worker error: {e}")
+                await asyncio.sleep(0.1)
 
     async def enrichment_broadcast(self, data: dict):
         print(f"[DEBUG] enrichment_broadcast entered with {len(self.active_connections)} connections")
@@ -89,15 +98,12 @@ class ConnectionManager:
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        # Capture the running loop if not already done
-        if not self.loop:
-            try:
-                self.loop = asyncio.get_running_loop()
-                print(f"[DEBUG] manager.loop captured in connect: {id(self.loop)}")
-            except Exception as e:
-                print(f"[DEBUG] Failed to capture loop in connect: {e}")
-            
         self.active_connections.append(websocket)
+        
+        # Start worker task if not running
+        if not self.worker_task or self.worker_task.done():
+            self.worker_task = asyncio.create_task(self.broadcast_worker())
+            
         print(f"[DEBUG] Connection accepted. Total connections: {len(self.active_connections)}")
         is_hf = os.environ.get("SPACE_ID") is not None
         if not is_hf:
@@ -135,23 +141,8 @@ manager = ConnectionManager()
 def get_monitored_env_class(manager):
     class MonitoredEnv(LongHorizonMemoryEnvironment):
         def _broadcast(self, data: dict):
-            print(f"[DEBUG] _broadcast bridge triggered. manager.loop: {id(manager.loop) if manager.loop else 'NONE'}")
-            if manager.loop:
-                try:
-                    asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), manager.loop)
-                    print("[DEBUG] run_coroutine_threadsafe called")
-                except Exception as e:
-                    print(f"[DEBUG] run_coroutine_threadsafe FAILED: {e}")
-            else:
-                print("[DEBUG] No manager.loop found in bridge")
-                # Still try to find a loop if possible
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        print(f"[DEBUG] Using fallback loop: {id(loop)}")
-                        asyncio.run_coroutine_threadsafe(manager.enrichment_broadcast(data), loop)
-                except Exception as e:
-                    print(f"[DEBUG] Fallback loop failed: {e}")
+            print(f"[DEBUG] _broadcast bridge triggered. Putting data in queue.")
+            manager.broadcast_queue.put(data)
 
         def step(self, action: LongHorizonMemoryAction) -> LongHorizonMemoryObservation:
             obs = super().step(action)
