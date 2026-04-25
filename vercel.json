@@ -19,15 +19,19 @@
       "destination": "api/index.py"
     },
     {
-      "source": "/assets/(.*)",
-      "destination": "/ui/assets/$1"
+      "source": "/assets/:path*",
+      "destination": "/ui/assets/:path*"
     },
     {
       "source": "/vite.svg",
       "destination": "/ui/vite.svg"
     },
     {
-      "source": "/((?!api/|assets/|favicon.ico|vite.svg).*)",
+      "source": "/favicon.ico",
+      "destination": "/ui/favicon.ico"
+    },
+    {
+      "source": "/(.*)",
       "destination": "/ui/index.html"
     }
   ]
