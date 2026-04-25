@@ -138,6 +138,12 @@ async def monitored_step(action_req: dict):
 async def health_check():
     return {"status": "ok"}
 
+@app.post("/api/broadcast")
+async def broadcast_endpoint(data: dict):
+    """Endpoint for HF Space to push updates to the Vercel dashboard."""
+    await manager.enrichment_broadcast(data)
+    return {"status": "broadcasted"}
+
 
 @app.get("/")
 async def root_redirect():

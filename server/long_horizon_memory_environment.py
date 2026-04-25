@@ -53,6 +53,19 @@ def broadcast_sync(data_type: str, payload: Dict[str, Any]):
                     "type": data_type,
                     "payload": payload
                 }))
+        
+        # Also send to Vercel hosted dashboard if we are in HF Space
+        # Check if running on HF Spaces
+        if os.getenv("SPACE_ID"):
+            import httpx
+            dashboard_url = "https://long-horizon-memory-v2.vercel.app/api/broadcast"
+            # Fire and forget
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(httpx.post(dashboard_url, json={
+                    "type": data_type,
+                    "payload": payload
+                }, timeout=1.0))
     except Exception:
         pass
 
