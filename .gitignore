@@ -26,7 +26,7 @@ MANIFEST
 venv/
 ENV/
 env/
-
+benchmark/
 # Environment variables
 .env
 .env.local
@@ -71,13 +71,8 @@ coverage.xml
 *.bak
 *.swp
 
-# UI Dependencies
-ui/node_modules/
-ui/dist/
-ui/.env
-ui/.env.local
-ui/.DS_Store
-ui/*.log
-
-benchmark/
-benchmark/.env
+REWARD_SYSTEM_GUIDE.md
+demo_llm_judge.py
+example_usage.py
+test_new_rewards.py
+train_local_ppo.py
