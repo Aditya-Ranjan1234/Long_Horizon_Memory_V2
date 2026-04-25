@@ -53,15 +53,8 @@ import json
 import asyncio
 from typing import List
 from fastapi import WebSocket, WebSocketDisconnect
-
-# Create the app with web interface and README integration
-app = create_app(
-    LongHorizonMemoryEnvironment,
-    LongHorizonMemoryAction,
-    LongHorizonMemoryObservation,
-    env_name="long_horizon_memory",
-    max_concurrent_envs=1,
-)
+from fastapi.staticfiles import StaticFiles
+import os
 
 import httpx
 import websockets
@@ -71,8 +64,19 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.hf_task = None
+        self.loop = None
+        try:
+            self.loop = asyncio.get_event_loop()
+        except Exception:
+            pass
 
     async def enrichment_broadcast(self, data: dict):
+        if not self.loop:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except Exception:
+                pass
+
         if "timestamp" not in data:
             data["timestamp"] = datetime.now().isoformat()
         
@@ -113,6 +117,59 @@ class ConnectionManager:
                 await asyncio.sleep(5)
 
 manager = ConnectionManager()
+
+# Create the app with web interface and README integration
+def get_monitored_env_class(manager):
+    class MonitoredEnv(LongHorizonMemoryEnvironment):
+        def _broadcast(self, data: dict):
+            if manager.loop:
+                manager.loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(manager.enrichment_broadcast(data))
+                )
+            else:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(manager.enrichment_broadcast(data))
+                except Exception:
+                    pass
+
+        def step(self, action: LongHorizonMemoryAction) -> LongHorizonMemoryObservation:
+            obs = super().step(action)
+            try:
+                data = obs.model_dump() if hasattr(obs, "model_dump") else obs.dict()
+                data["operation"] = action.operation
+                self._broadcast(data)
+            except Exception as e:
+                print(f"[BROADCAST ERROR] {e}")
+            return obs
+
+        def reset(self) -> LongHorizonMemoryObservation:
+            obs = super().reset()
+            try:
+                data = obs.model_dump() if hasattr(obs, "model_dump") else obs.dict()
+                data["operation"] = "reset"
+                self._broadcast(data)
+            except Exception as e:
+                print(f"[BROADCAST ERROR] {e}")
+            return obs
+    return MonitoredEnv
+
+app = create_app(
+    get_monitored_env_class(manager),
+    LongHorizonMemoryAction,
+    LongHorizonMemoryObservation,
+    env_name="long_horizon_memory",
+    max_concurrent_envs=1,
+)
+
+# --- Serve custom UI if available ---
+ui_dist_path = os.path.join(os.path.dirname(__file__), "dist")
+if os.path.exists(ui_dist_path):
+    print(f"[SERVER] Mounting custom UI from {ui_dist_path}")
+    app.mount("/web", StaticFiles(directory=ui_dist_path, html=True), name="custom_web")
+else:
+    print(f"[SERVER] Custom UI dist not found at {ui_dist_path}")
 
 @app.websocket("/ws/monitor")
 async def websocket_endpoint(websocket: WebSocket):
