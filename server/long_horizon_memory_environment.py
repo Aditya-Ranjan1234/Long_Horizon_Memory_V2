@@ -18,6 +18,7 @@ Rewards are shaped for stable training and include:
 - memory budget pressure
 - dense potential-based shaping
 - terminal QA reward from hybrid semantic matching
+- anti-noop-spam shaping (consecutive-noop counter + asymmetric per-action rewards)
 """
 
 import json
@@ -50,32 +51,40 @@ class LongHorizonMemoryEnvironment(Environment):
     MEMORY_TOKEN_BUDGET = 250
     MAX_REWRITE_GROWTH_RATIO = 1.40
 
-    # ANTI-NOOP SPAM REWARD STRUCTURE
-    # Make noop extremely risky - force the model to take meaningful actions
+    # ANTI-NOOP-SPAM REWARD SHAPING
+    # Per-action rewards: bias toward meaningful actions, but leave headroom
+    # so that stacked penalties (base + counterfactual + potential shaping)
+    # do not saturate the [-1.0, 1.0] clip on a single bad step.
     APPEND_RELEVANT_REWARD = 0.25
-    APPEND_IRRELEVANT_PENALTY = -0.18
-    NOOP_IRRELEVANT_REWARD = 0.02  # Reduced from 0.05
-    NOOP_RELEVANT_PENALTY = -0.35  # Increased from -0.16 (HARSH PENALTY)
+    APPEND_IRRELEVANT_PENALTY = -0.14
+    NOOP_IRRELEVANT_REWARD = 0.02
+    NOOP_RELEVANT_PENALTY = -0.22  # tempered from -0.35 to avoid clip saturation;
+                                   # counterfactual term shares the work
 
-    REWRITE_RELEVANT_BASE_REWARD = 0.12  # Increased from 0.08
-    REWRITE_IRRELEVANT_PENALTY = -0.05  # Increased penalty
-    REWRITE_GROWTH_PENALTY_MAX = 0.20  # Reduced from 0.25
+    REWRITE_RELEVANT_BASE_REWARD = 0.12
+    REWRITE_IRRELEVANT_PENALTY = -0.02
+    REWRITE_GROWTH_PENALTY_MAX = 0.25
 
-    QUALITY_DELTA_WEIGHT = 0.20  # Increased from 0.15
-    POTENTIAL_SHAPING_WEIGHT = 0.50  # Increased from 0.45
+    QUALITY_DELTA_WEIGHT = 0.20
+    POTENTIAL_SHAPING_WEIGHT = 0.50
     TERMINAL_WEIGHT = 0.50
 
-    COUNTERFACTUAL_WEIGHT = 0.30  # Increased from 0.20 to punish bad noops harder
+    # Counterfactual and LLM-based rewards
+    COUNTERFACTUAL_WEIGHT = 0.25  # tempered from 0.30 to share work with base penalty
     USE_LLM_JUDGE = True  # ALWAYS ON - LLM answers questions, similarity judges
     HF_API_TOKEN = os.getenv("HF_API_TOKEN", "")
     HF_MODEL = os.getenv("HF_MODEL", "meta-llama/Llama-3.2-1B-Instruct")
     HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
 
     # NOOP SPAM DETECTION
-    MAX_CONSECUTIVE_NOOPS = 3  # After 3 noops in a row, start penalizing heavily
+    # Counter only resets on actions that are *productive*: append of a relevant
+    # message, or a rewrite that improves quality. Bad appends don't reset it.
+    MAX_CONSECUTIVE_NOOPS = 3
+    NOOP_SPAM_PENALTY_PER_EXTRA = 0.15
+    NOOP_SPAM_PENALTY_CAP = 0.50
 
     def __init__(self):
-        episodes_path = Path(__file__).with_name("episodes_extreme_30.json")
+        episodes_path = Path(__file__).with_name("episodes.json")
         with episodes_path.open("r", encoding="utf-8") as f:
             self.episodes = json.load(f)
 
@@ -106,10 +115,16 @@ class LongHorizonMemoryEnvironment(Environment):
         self._idf: Dict[str, float] = {}
         self._idf_default = 1.0
 
-        # Track consecutive noops to penalize spam
+        # Track consecutive noops to penalize spam.
+        # Counter resets only on *productive* actions (append-of-relevant,
+        # or rewrite that strictly improves quality). Bad appends do not reset.
         self._consecutive_noops = 0
         self._total_noops = 0
         self._total_appends = 0
+        # Tracks whether the agent has ever nooped a relevant message this
+        # episode. Gates the empty-memory penalty so we don't punish correct
+        # early-noop behavior on episodes that start with junk messages.
+        self._missed_relevant_this_episode = False
 
         self._set_random_episode()
 
@@ -170,6 +185,7 @@ class LongHorizonMemoryEnvironment(Environment):
         self._consecutive_noops = 0
         self._total_noops = 0
         self._total_appends = 0
+        self._missed_relevant_this_episode = False
 
     def _tokenize(self, text: str) -> List[str]:
         return re.findall(r"[a-z0-9]+", text.lower())
@@ -463,22 +479,31 @@ Answer (be brief):"""
         try:
             import requests
 
+            headers = {
+                "Authorization": f"Bearer {self.HF_API_TOKEN}",
+                "Content-Type": "application/json",
+            }
+
             response = requests.post(
-                f"{self.OLLAMA_URL}/api/generate",
+                self.HF_API_URL,
+                headers=headers,
                 json={
-                    "model": self.QA_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
+                    "inputs": prompt,
+                    "parameters": {
                         "temperature": 0.1,
-                        "num_predict": 50,
+                        "max_new_tokens": 50,
+                        "return_full_text": False,
                     },
                 },
-                timeout=10,
+                timeout=30,
             )
 
             if response.status_code == 200:
-                answer = response.json().get("response", "").strip()
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    answer = result[0].get("generated_text", "").strip()
+                else:
+                    answer = result.get("generated_text", "").strip()
                 return answer
             else:
                 return self._answer_question(memory, question)
@@ -525,19 +550,31 @@ Score:"""
         try:
             import requests
 
+            headers = {
+                "Authorization": f"Bearer {self.HF_API_TOKEN}",
+                "Content-Type": "application/json",
+            }
+
             response = requests.post(
-                f"{self.OLLAMA_URL}/api/generate",
+                self.HF_API_URL,
+                headers=headers,
                 json={
-                    "model": self.JUDGE_MODEL,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {"temperature": 0.0},
+                    "inputs": prompt,
+                    "parameters": {
+                        "temperature": 0.0,
+                        "max_new_tokens": 10,
+                        "return_full_text": False,
+                    },
                 },
-                timeout=15,
+                timeout=30,
             )
 
             if response.status_code == 200:
-                text = response.json().get("response", "0.0").strip()
+                result = response.json()
+                if isinstance(result, list) and len(result) > 0:
+                    text = result[0].get("generated_text", "0.0").strip()
+                else:
+                    text = result.get("generated_text", "0.0").strip()
                 match = re.search(r"(\d+\.?\d*)", text)
                 if match:
                     score = float(match.group(1))
@@ -689,6 +726,9 @@ Score:"""
             "task_score": self._task_score(),
             "last_action_error": self.last_action_error,
             "reward_breakdown": self._last_reward_breakdown,
+            "consecutive_noops": self._consecutive_noops,
+            "total_noops": self._total_noops,
+            "total_appends": self._total_appends,
         }
 
         return LongHorizonMemoryObservation(
@@ -730,14 +770,16 @@ Score:"""
 
         operation = action.operation
         if operation == "append":
-            # Reset noop counter on append
-            self._consecutive_noops = 0
             self._total_appends += 1
 
             if message_is_relevant:
+                # Productive action — reset spam counter.
+                self._consecutive_noops = 0
                 reward += self.APPEND_RELEVANT_REWARD
                 breakdown["append_relevance"] = self.APPEND_RELEVANT_REWARD
             else:
+                # Bad append: do NOT reset the spam counter — appending junk
+                # is not a way to dodge the spam meter.
                 reward += self.APPEND_IRRELEVANT_PENALTY
                 breakdown["append_relevance"] = self.APPEND_IRRELEVANT_PENALTY
 
@@ -753,29 +795,37 @@ Score:"""
 
             # Base noop reward
             if message_is_relevant:
+                self._missed_relevant_this_episode = True
                 reward += self.NOOP_RELEVANT_PENALTY
                 breakdown["noop_relevance"] = self.NOOP_RELEVANT_PENALTY
             else:
                 reward += self.NOOP_IRRELEVANT_REWARD
                 breakdown["noop_relevance"] = self.NOOP_IRRELEVANT_REWARD
 
-            # ANTI-SPAM PENALTY: Punish consecutive noops harshly
+            # ANTI-SPAM PENALTY: punish runs of consecutive noops past the threshold.
             if self._consecutive_noops > self.MAX_CONSECUTIVE_NOOPS:
-                spam_penalty = -0.15 * (self._consecutive_noops - self.MAX_CONSECUTIVE_NOOPS)
-                spam_penalty = max(spam_penalty, -0.50)  # Cap at -0.50
+                over = self._consecutive_noops - self.MAX_CONSECUTIVE_NOOPS
+                spam_penalty = -min(
+                    self.NOOP_SPAM_PENALTY_CAP,
+                    self.NOOP_SPAM_PENALTY_PER_EXTRA * over,
+                )
                 reward += spam_penalty
                 breakdown["noop_spam_penalty"] = spam_penalty
 
-            # EMPTY MEMORY PENALTY: If memory is empty and we're doing noop, penalize more
-            if not self.memory_text.strip() and self.total_message_number > 2:
+            # EMPTY-MEMORY-NOOP PENALTY: only fires if the agent has *already*
+            # nooped a relevant message this episode. This prevents punishing
+            # correct early-noop behavior on episodes that start with junk,
+            # while still discouraging "noop forever and keep memory empty".
+            if (
+                not self.memory_text.strip()
+                and self.total_message_number > 2
+                and self._missed_relevant_this_episode
+            ):
                 empty_memory_penalty = -0.10
                 reward += empty_memory_penalty
                 breakdown["empty_memory_noop_penalty"] = empty_memory_penalty
 
         elif operation == "rewrite":
-            # Reset noop counter on rewrite
-            self._consecutive_noops = 0
-
             proposed = action.rewrite_memory
             if proposed is None:
                 self.last_action_error = "rewrite_memory_required"
@@ -790,6 +840,15 @@ Score:"""
                     message_is_relevant=message_is_relevant,
                 )
                 self.memory_text = new_memory
+                # Reset spam counter only if the rewrite was actually
+                # quality-improving — otherwise rewrites become a free
+                # spam-counter reset trick.
+                quality_improved = (
+                    float(rewrite_details["new_quality"])
+                    > float(rewrite_details["old_quality"])
+                )
+                if quality_improved:
+                    self._consecutive_noops = 0
                 rewrite_reward = float(rewrite_details["rewrite_reward"])
                 reward += rewrite_reward
                 breakdown["rewrite_reward"] = rewrite_reward
