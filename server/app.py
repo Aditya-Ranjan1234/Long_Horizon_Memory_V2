@@ -164,22 +164,18 @@ app = create_app(
 )
 
 # --- Serve custom UI if available ---
-# Debug: Print current structure
-print(f"[DEBUG] Current working directory: {os.getcwd()}")
-print(f"[DEBUG] __file__: {__file__}")
-try:
-    print(f"[DEBUG] Contents of /app: {os.listdir('/app')}")
-    if os.path.exists('/app/ui'):
-        print(f"[DEBUG] Contents of /app/ui: {os.listdir('/app/ui')}")
-except Exception as e:
-    print(f"[DEBUG] Could not list /app: {e}")
-
-ui_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
+ui_dist_path = os.path.join(os.path.dirname(__file__), "dist")
 if os.path.exists(ui_dist_path):
     print(f"[SERVER] Mounting custom UI from {ui_dist_path}")
     app.mount("/web", StaticFiles(directory=ui_dist_path, html=True), name="custom_web")
 else:
-    print(f"[SERVER] Custom UI dist not found at {ui_dist_path}, using default OpenEnv UI")
+    # Fallback for local development if not in server/dist
+    ui_dist_path_alt = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ui", "dist")
+    if os.path.exists(ui_dist_path_alt):
+        print(f"[SERVER] Mounting custom UI from {ui_dist_path_alt}")
+        app.mount("/web", StaticFiles(directory=ui_dist_path_alt, html=True), name="custom_web")
+    else:
+        print(f"[SERVER] Custom UI dist not found, using default OpenEnv UI")
 
 
 @app.websocket("/ws/monitor")
