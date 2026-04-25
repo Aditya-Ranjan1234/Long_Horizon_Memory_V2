@@ -16,14 +16,16 @@ Rewards are shaped for stable training and include:
 - per-step relevance rewards
 - rewrite quality and growth penalties
 - memory budget pressure
-- quality-delta shaping
-- terminal QA reward based on embedding matches
+- dense potential-based shaping
+- terminal QA reward from hybrid semantic matching
 """
 
 import json
+import math
 import os
 import random
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -48,17 +50,18 @@ class LongHorizonMemoryEnvironment(Environment):
     MEMORY_TOKEN_BUDGET = 160
     MAX_REWRITE_GROWTH_RATIO = 1.40
 
-    APPEND_RELEVANT_REWARD = 0.20
-    APPEND_IRRELEVANT_PENALTY = -0.20
+    APPEND_RELEVANT_REWARD = 0.18
+    APPEND_IRRELEVANT_PENALTY = -0.14
     NOOP_IRRELEVANT_REWARD = 0.05
-    NOOP_RELEVANT_PENALTY = -0.20
+    NOOP_RELEVANT_PENALTY = -0.16
 
-    REWRITE_RELEVANT_BASE_REWARD = 0.12
-    REWRITE_IRRELEVANT_PENALTY = -0.10
+    REWRITE_RELEVANT_BASE_REWARD = 0.08
+    REWRITE_IRRELEVANT_PENALTY = -0.02
     REWRITE_GROWTH_PENALTY_MAX = 0.25
 
-    QUALITY_DELTA_WEIGHT = 0.25
-    TERMINAL_WEIGHT = 0.60
+    QUALITY_DELTA_WEIGHT = 0.15
+    POTENTIAL_SHAPING_WEIGHT = 0.45
+    TERMINAL_WEIGHT = 0.50
 
     def __init__(self):
         episodes_path = Path(__file__).with_name("episodes_extreme_30.json")
@@ -87,7 +90,10 @@ class LongHorizonMemoryEnvironment(Environment):
         self.last_action_error: Optional[str] = None
         self._last_reward_breakdown: Dict[str, float] = {}
         self._last_quality_score = 0.0
+        self._last_potential_score = 0.0
         self._done = False
+        self._idf: Dict[str, float] = {}
+        self._idf_default = 1.0
 
         self._set_random_episode()
 
@@ -140,7 +146,9 @@ class LongHorizonMemoryEnvironment(Environment):
         self.last_action_error = None
         self._last_reward_breakdown = {}
         self._done = len(self.messages) == 0
+        self._build_episode_idf()
         self._last_quality_score = self._quality_score(self.memory_text)
+        self._last_potential_score = self._potential_score(self.memory_text)
 
     def _tokenize(self, text: str) -> List[str]:
         return re.findall(r"[a-z0-9]+", text.lower())
@@ -152,69 +160,156 @@ class LongHorizonMemoryEnvironment(Environment):
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         return "\n".join(lines)
 
-    def _hashed_embedding(self, text: str, dim: int = 256) -> List[float]:
-        vec = [0.0] * dim
+    def _build_episode_idf(self) -> None:
+        docs: List[str] = []
+        docs.extend(str(m.get("text", "")) for m in self.messages)
+        docs.extend(str(f.get("text", "")) for f in self.key_facts)
+        docs.extend(str(q.get("question", "")) for q in self.questions)
+        docs.extend(str(q.get("answer", "")) for q in self.questions)
+        docs = [d for d in docs if d.strip()]
+
+        if not docs:
+            self._idf = {}
+            self._idf_default = 1.0
+            return
+
+        df: Counter[str] = Counter()
+        for doc in docs:
+            uniq = set(self._tokenize(doc))
+            for tok in uniq:
+                df[tok] += 1
+
+        n_docs = len(docs)
+        self._idf = {
+            tok: math.log((n_docs + 1.0) / (count + 1.0)) + 1.0
+            for tok, count in df.items()
+        }
+        self._idf_default = math.log((n_docs + 1.0) / 1.0) + 1.0
+
+    def _tfidf_vector(self, text: str) -> Dict[str, float]:
         tokens = self._tokenize(text)
         if not tokens:
-            return vec
+            return {}
+        tf = Counter(tokens)
+        total = float(sum(tf.values()))
+        vec: Dict[str, float] = {}
+        for tok, count in tf.items():
+            idf = self._idf.get(tok, self._idf_default)
+            vec[tok] = (count / total) * idf
+        return vec
 
-        for token in tokens:
-            idx = hash(token) % dim
-            vec[idx] += 1.0
-
-        norm = sum(v * v for v in vec) ** 0.5
-        if norm <= 0.0:
-            return vec
-        return [v / norm for v in vec]
-
-    def _cosine(self, a: List[float], b: List[float]) -> float:
+    def _cosine_sparse(self, a: Dict[str, float], b: Dict[str, float]) -> float:
         if not a or not b:
             return 0.0
-        return max(0.0, min(1.0, sum(x * y for x, y in zip(a, b))))
+        shared = set(a).intersection(b)
+        dot = sum(a[t] * b[t] for t in shared)
+        na = math.sqrt(sum(v * v for v in a.values()))
+        nb = math.sqrt(sum(v * v for v in b.values()))
+        if na <= 0.0 or nb <= 0.0:
+            return 0.0
+        return max(0.0, min(1.0, dot / (na * nb)))
+
+    def _token_f1(self, a_text: str, b_text: str) -> float:
+        a = Counter(self._tokenize(a_text))
+        b = Counter(self._tokenize(b_text))
+        if not a or not b:
+            return 0.0
+        overlap = sum(min(a[t], b[t]) for t in set(a).intersection(b))
+        p = overlap / max(1, sum(a.values()))
+        r = overlap / max(1, sum(b.values()))
+        if p + r <= 0:
+            return 0.0
+        return 2.0 * p * r / (p + r)
+
+    def _char_ngram_cosine(self, a_text: str, b_text: str, n: int = 3) -> float:
+        def grams(s: str) -> Counter[str]:
+            s = re.sub(r"\s+", " ", s.lower()).strip()
+            if len(s) < n:
+                return Counter()
+            return Counter(s[i : i + n] for i in range(len(s) - n + 1))
+
+        a = grams(a_text)
+        b = grams(b_text)
+        if not a or not b:
+            return 0.0
+        shared = set(a).intersection(b)
+        dot = sum(float(a[g] * b[g]) for g in shared)
+        na = math.sqrt(sum(float(v * v) for v in a.values()))
+        nb = math.sqrt(sum(float(v * v) for v in b.values()))
+        if na <= 0.0 or nb <= 0.0:
+            return 0.0
+        return max(0.0, min(1.0, dot / (na * nb)))
+
+    def _hybrid_similarity(self, a_text: str, b_text: str) -> float:
+        if not a_text.strip() or not b_text.strip():
+            return 0.0
+        tfidf = self._cosine_sparse(self._tfidf_vector(a_text), self._tfidf_vector(b_text))
+        tok_f1 = self._token_f1(a_text, b_text)
+        chr_sim = self._char_ngram_cosine(a_text, b_text)
+        return max(0.0, min(1.0, 0.60 * tfidf + 0.25 * tok_f1 + 0.15 * chr_sim))
+
+    def _memory_segments(self, memory_text: str) -> List[str]:
+        segs = [s.strip() for s in re.split(r"[\n\.!?;]+", memory_text) if s.strip()]
+        if not segs and memory_text.strip():
+            segs = [memory_text.strip()]
+        return segs
 
     def _memory_relevance_similarity(self, memory_text: str) -> float:
         relevant_memory = "\n".join(str(f.get("text", "")) for f in self.key_facts)
         if not relevant_memory.strip():
             return 0.0
-        return self._cosine(self._hashed_embedding(memory_text), self._hashed_embedding(relevant_memory))
+        return self._hybrid_similarity(memory_text, relevant_memory)
 
     def _fact_coverage(self, memory_text: str) -> float:
         if not self.key_facts:
             return 0.0
 
-        memory_emb = self._hashed_embedding(memory_text)
-        matched = 0
+        segments = self._memory_segments(memory_text)
+        if not segments:
+            return 0.0
+        sims: List[float] = []
         for fact in self.key_facts:
             fact_text = str(fact.get("text", ""))
-            score = self._cosine(memory_emb, self._hashed_embedding(fact_text))
-            if score >= 0.45:
-                matched += 1
-        return matched / len(self.key_facts)
+            best = max((self._hybrid_similarity(seg, fact_text) for seg in segments), default=0.0)
+            sims.append(best)
+        return sum(sims) / len(sims)
 
     def _answer_question(self, memory_text: str, question: str) -> str:
         if not memory_text.strip():
             return ""
 
-        candidates = [
-            seg.strip()
-            for seg in re.split(r"[\n\.!?]+", memory_text)
-            if seg.strip()
-        ]
+        candidates = self._memory_segments(memory_text)
         if not candidates:
             return ""
 
-        question_emb = self._hashed_embedding(question)
-        best = max(
+        ranked = sorted(
             candidates,
-            key=lambda s: self._cosine(self._hashed_embedding(s), question_emb),
+            key=lambda s: self._hybrid_similarity(s, question),
+            reverse=True,
         )
-        return best
+        top = [s for s in ranked[:2] if s]
+        return ". ".join(top).strip()
+
+    def _number_overlap_score(self, a_text: str, b_text: str) -> float:
+        a_nums = set(re.findall(r"\d+(?:\.\d+)?", a_text))
+        b_nums = set(re.findall(r"\d+(?:\.\d+)?", b_text))
+        if not a_nums or not b_nums:
+            return 0.0
+        inter = len(a_nums.intersection(b_nums))
+        union = len(a_nums.union(b_nums))
+        return inter / max(1, union)
 
     def _qa_similarity_score(self, memory_text: str) -> float:
+        metrics = self._qa_metrics(memory_text)
+        return metrics["qa_score"]
+
+    def _qa_metrics(self, memory_text: str) -> Dict[str, float]:
         if not self.questions:
-            return 0.0
+            return {"qa_score": 0.0, "exact_hit_rate": 0.0, "answerable_rate": 0.0}
 
         scores: List[float] = []
+        exact_hits = 0
+        answerable = 0
         for q in self.questions:
             question = str(q.get("question", ""))
             expected_answer = str(q.get("answer", "")).strip()
@@ -223,38 +318,60 @@ class LongHorizonMemoryEnvironment(Environment):
             if not expected_answer:
                 continue
 
-            sim = self._cosine(
-                self._hashed_embedding(predicted),
-                self._hashed_embedding(expected_answer),
-            )
-            if expected_answer.lower() in predicted.lower():
+            if predicted.strip():
+                answerable += 1
+
+            sem = self._hybrid_similarity(predicted, expected_answer)
+            num = self._number_overlap_score(predicted, expected_answer)
+            sim = 0.80 * sem + 0.20 * num
+            if expected_answer.lower() in predicted.lower() or predicted.lower() in expected_answer.lower():
+                exact_hits += 1
                 sim = max(sim, 1.0)
             scores.append(sim)
 
         if not scores:
-            return 0.0
-        return sum(scores) / len(scores)
+            return {"qa_score": 0.0, "exact_hit_rate": 0.0, "answerable_rate": 0.0}
+        return {
+            "qa_score": sum(scores) / len(scores),
+            "exact_hit_rate": exact_hits / len(scores),
+            "answerable_rate": answerable / len(scores),
+        }
 
     def _memory_overflow_penalty(self, memory_text: str) -> float:
         token_count = self._token_count(memory_text)
         overflow = max(0, token_count - self.MEMORY_TOKEN_BUDGET)
         if overflow == 0:
             return 0.0
-        return min(0.30, 0.30 * (overflow / max(1, self.MEMORY_TOKEN_BUDGET)))
+        ratio = overflow / max(1.0, float(self.MEMORY_TOKEN_BUDGET))
+        return min(0.45, 0.10 * ratio + 0.35 * (ratio ** 2))
 
     def _quality_score(self, memory_text: str) -> float:
         fact_coverage = self._fact_coverage(memory_text)
-        qa_score = self._qa_similarity_score(memory_text)
+        qa_score = self._qa_metrics(memory_text)["qa_score"]
         relevance = self._memory_relevance_similarity(memory_text)
         overflow_penalty = self._memory_overflow_penalty(memory_text)
 
         score = (
-            0.45 * fact_coverage
+            0.40 * fact_coverage
             + 0.35 * qa_score
-            + 0.20 * relevance
+            + 0.25 * relevance
             - 0.35 * overflow_penalty
         )
         return max(0.0, min(1.0, score))
+
+    def _potential_score(self, memory_text: str) -> float:
+        qa_metrics = self._qa_metrics(memory_text)
+        fact_coverage = self._fact_coverage(memory_text)
+        relevance = self._memory_relevance_similarity(memory_text)
+        overflow_penalty = self._memory_overflow_penalty(memory_text)
+        potential = (
+            0.35 * fact_coverage
+            + 0.35 * qa_metrics["qa_score"]
+            + 0.15 * qa_metrics["answerable_rate"]
+            + 0.15 * relevance
+            - 0.30 * overflow_penalty
+        )
+        return max(0.0, min(1.0, potential))
 
     def _rewrite_reward(self, old_memory: str, new_memory: str, message_is_relevant: bool) -> Dict[str, float]:
         old_tokens = self._token_count(old_memory)
@@ -264,11 +381,14 @@ class LongHorizonMemoryEnvironment(Environment):
         new_quality = self._quality_score(new_memory)
 
         reward = 0.0
+        quality_delta = new_quality - old_quality
         if message_is_relevant:
             reward += self.REWRITE_RELEVANT_BASE_REWARD
-            reward += 0.20 * (new_quality - old_quality)
+            reward += 0.25 * quality_delta
         else:
+            # Permit beneficial rewrites even on irrelevant turns.
             reward += self.REWRITE_IRRELEVANT_PENALTY
+            reward += 0.10 * quality_delta
 
         growth_penalty = 0.0
         if old_tokens > 0:
@@ -294,11 +414,20 @@ class LongHorizonMemoryEnvironment(Environment):
         return self.messages[self.total_message_number]
 
     def _terminal_bonus(self) -> float:
-        qa_score = self._qa_similarity_score(self.memory_text)
+        qa_metrics = self._qa_metrics(self.memory_text)
+        qa_score = qa_metrics["qa_score"]
+        exact_hit_rate = qa_metrics["exact_hit_rate"]
+        answerable_rate = qa_metrics["answerable_rate"]
         fact_coverage = self._fact_coverage(self.memory_text)
         relevance = self._memory_relevance_similarity(self.memory_text)
 
-        terminal = 0.55 * qa_score + 0.30 * fact_coverage + 0.15 * relevance
+        terminal = (
+            0.35 * qa_score
+            + 0.25 * exact_hit_rate
+            + 0.15 * answerable_rate
+            + 0.15 * fact_coverage
+            + 0.10 * relevance
+        )
         return max(0.0, min(1.0, terminal))
 
     def _task_score(self) -> float:
@@ -320,6 +449,7 @@ class LongHorizonMemoryEnvironment(Environment):
             "fact_coverage": self._fact_coverage(self.memory_text),
             "qa_similarity": self._qa_similarity_score(self.memory_text),
             "memory_relevance_similarity": self._memory_relevance_similarity(self.memory_text),
+            "potential_score": self._potential_score(self.memory_text),
             "task_score": self._task_score(),
             "last_action_error": self.last_action_error,
             "reward_breakdown": self._last_reward_breakdown,
@@ -357,6 +487,7 @@ class LongHorizonMemoryEnvironment(Environment):
 
         reward = 0.0
         breakdown: Dict[str, float] = {}
+        prev_potential = self._last_potential_score
 
         operation = action.operation
         if operation == "append":
@@ -417,6 +548,13 @@ class LongHorizonMemoryEnvironment(Environment):
         reward += delta_reward
         breakdown["quality_delta_reward"] = delta_reward
         self._last_quality_score = new_quality
+
+        new_potential = self._potential_score(self.memory_text)
+        potential_delta = new_potential - prev_potential
+        potential_reward = self.POTENTIAL_SHAPING_WEIGHT * potential_delta
+        reward += potential_reward
+        breakdown["potential_shaping_reward"] = potential_reward
+        self._last_potential_score = new_potential
 
         self.total_message_number += 1
         if self.total_message_number >= len(self.messages):
